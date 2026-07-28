@@ -741,13 +741,7 @@
             showToast("全試合のスコアを初期化しました", "info");
         }
 
-        function saveData() {
-            try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-            } catch (e) {
-                console.error("Failed to save state", e);
-            }
-        }
+
 
         function switchTab(tabName) {
             const tabs = ['setup', 'matches', 'standings'];
