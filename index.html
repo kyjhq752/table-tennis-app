@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>卓球 総当たり練習試合 管理アプリ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+    
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
+    <style>
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+        }
+        /* スクロールバーのカスタマイズ */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        /* 印刷用スタイル */
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            .print-only {
+                display: block !important;
+            }
+            body {
+                background: white;
+                color: black;
+            }
+            .card-shadow {
+                box-shadow: none !important;
+                border: 1px solid #ccc !important;
+            }
+        }
+    </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen flex flex-col">
+
+    <!-- ヘッダー -->
+    <header class="bg-gradient-to-r from-emerald-600 to-teal-700 text-white shadow-md no-print">
+        <div class="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row justify-between items-center gap-3">
+            <div class="flex items-center gap-3">
+                <div class="bg-white/20 p-2.5 rounded-xl backdrop-blur-sm">
+                    <i class="fa-solid font-bold text-2xl text-yellow-300">🏓</i>
+                </div>
+                <div>
+                    <h1 class="text-xl sm:text-2xl font-black tracking-wide">卓球 総当たりリーグマネージャー</h1>
+                    <p class="text-xs text-emerald-100">最大20名対応・自動コート配分・リアルタイム勝敗表</p>
+                </div>
+            </div>
+            
+            <!-- ナビゲーションタブ -->
+            <nav class="flex bg-emerald-800/50 p-1 rounded-xl backdrop-blur-md">
+                <button id="tab-btn-setup" onclick="switchTab('setup')" class="px-4 py-2 rounded-lg font-bold text-sm transition flex items-center gap-2 bg-white text-emerald-800 shadow">
+                    <i class="fa-solid fa-gear"></i> 設定・参加者
+                </button>
+                <button id="tab-btn-matches" onclick="switchTab('matches')" class="px-4 py-2 rounded-lg font-bold text-sm transition flex items-center gap-2 text-emerald-100 hover:text-white">
+                    <i class="fa-solid fa-list-check"></i> 対戦表・結果
+                </button>
+                <button id="tab-btn-standings" onclick="switchTab('standings')" class="px-4 py-2 rounded-lg font-bold text-sm transition flex items-center gap-2 text-emerald-100 hover:text-white">
+                    <i class="fa-solid fa-table-cells"></i> 勝敗表・順位
+                </button>
+            </nav>
+        </div>
+    </header>
+
+    <!-- オンライン共有バー -->
+    <div class="bg-slate-800 text-white shadow-inner py-2.5 px-4 no-print border-b border-slate-700">
+        <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div class="flex items-center gap-3">
+                <span id="online-status-badge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                    <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span> ローカルモード (端末内保存)
+                </span>
+                <span id="current-room-text" class="text-slate-300 font-medium hidden sm:inline">全員で同期するにはルームを作成・参加してください</span>
+            </div>
+            
+            <div class="flex items-center gap-2">
+                <div class="flex items-center gap-1 bg-slate-700/80 p-1 rounded-lg border border-slate-600">
+                    <input type="text" id="room-id-input" placeholder="ルームID (例: club2026)" class="bg-slate-900 text-white px-2.5 py-1 rounded text-xs font-mono w-32 focus:outline-none focus:ring-1 focus:ring-emerald-400">
+                    <button onclick="joinRoomFromInput()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded font-bold transition">
+                        接続
+                    </button>
+                </div>
+                <button id="btn-show-qr" onclick="showQRModal()" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-2.5 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition hidden">
+                    <i class="fa-solid fa-qrcode text-emerald-400"></i> QR共有
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- メインコンテンツ -->
+    <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+        <!-- 1. 設定・参加者登録画面 -->
+        <section id="sec-setup" class="space-y-6">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- 設定カード -->
+                <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-5">
+                    <h2 class="text-lg font-bold text-slate-800 border-b pb-3 flex items-center gap-2">
+                        <i class="fa-solid fa-sliders text-emerald-600"></i> 大会・試合設定
+                    </h2>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">大会・イベント名</label>
+                        <input type="text" id="tournament-title" value="卓球部 練習試合 総当たり戦" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm font-medium">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">使用する卓球台の台数</label>
+                        <div class="flex items-center gap-3">
+                            <input type="number" id="court-count" min="1" max="10" value="2" class="w-24 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none text-center font-bold text-lg">
+                            <span class="text-sm font-medium text-slate-600">台 (1〜10台)</span>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-1">台数に合わせて試合時間枠（スロット）を自動計算します</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-600 uppercase tracking-wider mb-2">マッチ形式</label>
+                        <select id="match-format" class="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 text-sm font-medium">
+                            <option value="3">3ゲームマッチ (2ゲーム先取)</option>
+                            <option value="5" selected>5ゲームマッチ (3ゲーム先取)</option>
+                            <option value="1">1ゲームマッチ (11点先取)</option>
+                        </select>
+                    </div>
+
+                    <div class="pt-2">
+                        <button onclick="generateTournament()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold rounded-xl shadow-md hover:shadow-lg transition flex items-center justify-center gap-2 text-base">
+                            <i class="fa-solid fa-play"></i> 対戦表を自動作成する
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 参加者登録カード -->
+                <div class="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-5">
+                    <div class="flex justify-between items-center border-b pb-3">
+                        <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                            <i class="fa-solid fa-users text-emerald-600"></i> 参加者登録
+                            <span id="player-count-badge" class="ml-2 text-xs font-bold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full">0 / 20人</span>
+                        </h2>
+                        <div class="flex gap-2">
+                            <button onclick="addSamplePlayers()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-bold transition">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i> サンプル入力
+                            </button>
+                            <button onclick="clearAllPlayers()" class="text-xs bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-1.5 rounded-lg font-bold transition">
+                                <i class="fa-solid fa-trash-can"></i> クリア
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 追加フォーム -->
+                    <div class="flex flex-col sm:flex-row gap-2">
+                        <input type="text" id="new-player-name" placeholder="選手名 (例: 佐藤 健)" class="flex-grow sm:w-1/2 px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm font-medium" onkeydown="if(event.key === 'Enter') addPlayer()">
+                        <input type="text" id="new-player-team" placeholder="チーム名 (任意例: A卓球クラブ)" class="flex-grow sm:w-1/2 px-4 py-2.5 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm font-medium" onkeydown="if(event.key === 'Enter') addPlayer()">
+                        <button onclick="addPlayer()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-5 py-2.5 rounded-xl shadow transition flex items-center justify-center gap-1.5 text-sm whitespace-nowrap">
+                            <i class="fa-solid fa-plus"></i> 追加
+                        </button>
+                    </div>
+
+                    <!-- 一括入力機能 collapsible -->
+                    <details class="group bg-slate-50 rounded-xl border border-slate-200 p-3">
+                        <summary class="text-xs font-bold text-slate-600 cursor-pointer flex items-center justify-between">
+                            <span><i class="fa-solid fa-file-lines mr-1"></i> 複数人・改行で一括入力する (カンマ区切りでチーム名指定可)</span>
+                            <i class="fa-solid fa-chevron-down text-slate-400 group-open:rotate-180 transition"></i>
+                        </summary>
+                        <div class="mt-3 space-y-2">
+                            <textarea id="bulk-player-input" rows="4" placeholder="名前, チーム名 (チーム名は省略可能)&#10;例:&#10;佐藤 健, 青空クラブ&#10;田中 太郎, 青空クラブ&#10;鈴木 花子, 南卓球会&#10;高橋 誠" class="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"></textarea>
+                            <button onclick="importBulkPlayers()" class="bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2 rounded-lg transition">一括反映</button>
+                        </div>
+                    </details>
+
+                    <!-- 登録選手一覧 -->
+                    <div class="space-y-2">
+                        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider">登録済みメンバー一覧（ドラッグまたは入れ替え可能）</div>
+                        <div id="player-list" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-[320px] overflow-y-auto p-1">
+                            <!-- JS dynamically injects player chips -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 2. 対戦表・結果入力画面 -->
+        <section id="sec-matches" class="space-y-6 hidden">
+            <!-- プログレスバー・ステータス -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 flex flex-col md:flex-row justify-between items-center gap-4">
+                <div class="w-full md:w-auto">
+                    <h2 id="display-tournament-title" class="text-xl font-black text-slate-800">卓球部 練習試合 総当たり戦</h2>
+                    <p id="tournament-info-badge" class="text-xs font-medium text-slate-500 mt-0.5">参加者 0名 | 全 0試合 | 使用卓球台 0台</p>
+                </div>
+
+                <div class="w-full md:w-1/2 flex items-center gap-4">
+                    <div class="flex-grow">
+                        <div class="flex justify-between text-xs font-bold text-slate-600 mb-1">
+                            <span>進行状況</span>
+                            <span id="progress-text">0 / 0 完了 (0%)</span>
+                        </div>
+                        <div class="w-full bg-slate-200 h-3 rounded-full overflow-hidden">
+                            <div id="progress-bar" class="bg-emerald-500 h-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <button onclick="resetScores()" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-2 rounded-lg font-bold transition whitespace-nowrap no-print">
+                        <i class="fa-solid fa-rotate-left"></i> スコア初期化
+                    </button>
+                </div>
+            </div>
+
+            <!-- フィルタータブ -->
+            <div class="flex justify-between items-center flex-wrap gap-3 no-print">
+                <div class="flex bg-slate-200/70 p-1 rounded-xl">
+                    <button id="filter-all" onclick="setMatchFilter('all')" class="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-white text-slate-800 shadow">全試合</button>
+                    <button id="filter-pending" onclick="setMatchFilter('pending')" class="px-3.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900">未終了</button>
+                    <button id="filter-completed" onclick="setMatchFilter('completed')" class="px-3.5 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900">終了済</button>
+                </div>
+
+                <div class="text-xs text-slate-500 font-medium">
+                    <i class="fa-solid fa-lightbulb text-amber-500"></i> 対戦カードをタップしてスコアを入力してください
+                </div>
+            </div>
+
+            <!-- 試合スロット・コート一覧 -->
+            <div id="matches-container" class="space-y-6">
+                <!-- JS dynamically generates match slots and court cards -->
+            </div>
+        </section>
+
+        <!-- 3. 勝敗表（星取表）・順位一覧画面 -->
+        <section id="sec-standings" class="space-y-6 hidden">
+            <!-- 印刷用ヘッダー -->
+            <div class="hidden print-only text-center border-b pb-4 mb-4">
+                <h1 id="print-tournament-title" class="text-2xl font-bold">卓球部 練習試合 総当たり戦</h1>
+                <p class="text-sm text-slate-600">勝敗表・最終結果一覧</p>
+            </div>
+
+            <!-- 順位表（ランキング） -->
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-trophy text-amber-500"></i> 順位表
+                    </h2>
+                    <button onclick="window.print()" class="no-print text-xs bg-slate-800 hover:bg-slate-900 text-white px-3.5 py-2 rounded-lg font-bold transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-print"></i> 印刷 / PDF保存
+                    </button>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm border-collapse">
+                        <thead>
+                            <tr class="bg-slate-100 text-slate-600 border-b border-slate-200 text-xs font-bold">
+                                <th class="p-3 text-center w-12">順位</th>
+                                <th class="p-3">選手名</th>
+                                <th class="p-3 text-center">試合数</th>
+                                <th class="p-3 text-center">勝</th>
+                                <th class="p-3 text-center">負</th>
+                                <th class="p-3 text-center">勝率</th>
+                                <th class="p-3 text-center">得セット</th>
+                                <th class="p-3 text-center">失セット</th>
+                                <th class="p-3 text-center">セット率</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ranking-table-body" class="divide-y divide-slate-100">
+                            <!-- JS dinamically populates ranking -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 勝敗表（星取表 / マトリクス） -->
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/80 space-y-4">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                            <i class="fa-solid fa-table text-emerald-600"></i> リーグ総当たり勝敗表（星取表）
+                        </h2>
+                        <p class="text-xs text-slate-500 mt-0.5">〇 = 勝利 / ✕ = 敗北（括弧内はセット数）</p>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto pb-2">
+                    <table id="matrix-table" class="w-full text-center text-xs border-collapse">
+                        <!-- JS dynamically populates cross-table matrix -->
+                    </table>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- スコア入力用モーダル Modal -->
+    <div id="score-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden no-print">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-6 transform transition-all animate-in fade-in zoom-in duration-200">
+            <div class="flex justify-between items-center border-b pb-3">
+                <span id="modal-match-badge" class="text-xs font-bold bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full">第1枠 - 卓球台 1</span>
+                <button onclick="closeScoreModal()" class="text-slate-400 hover:text-slate-600 p-1">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+
+            <!-- 対戦スコアコントロール -->
+            <div class="grid grid-cols-7 items-center gap-2 text-center">
+                <!-- 選手A -->
+                <div class="col-span-3 space-y-2">
+                    <p id="modal-player-a" class="font-bold text-slate-800 text-base truncate">選手A</p>
+                    <div class="flex items-center justify-center gap-2">
+                        <button onclick="adjustScore('a', -1)" class="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold text-lg">-</button>
+                        <span id="modal-score-a" class="text-4xl font-black text-emerald-600 w-12">0</span>
+                        <button onclick="adjustScore('a', 1)" class="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold text-lg">+</button>
+                    </div>
+                </div>
+
+                <div class="col-span-1 text-slate-300 font-black text-2xl">VS</div>
+
+                <!-- 選手B -->
+                <div class="col-span-3 space-y-2">
+                    <p id="modal-player-b" class="font-bold text-slate-800 text-base truncate">選手B</p>
+                    <div class="flex items-center justify-center gap-2">
+                        <button onclick="adjustScore('b', -1)" class="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold text-lg">-</button>
+                        <span id="modal-score-b" class="text-4xl font-black text-emerald-600 w-12">0</span>
+                        <button onclick="adjustScore('b', 1)" class="w-9 h-9 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 font-bold text-lg">+</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- クイックセット選択ボタン -->
+            <div class="space-y-2 border-t pt-4">
+                <label class="block text-xs font-bold text-slate-500 text-center">スコア簡単選択</label>
+                <div id="quick-score-buttons" class="flex flex-wrap justify-center gap-2">
+                    <!-- JS generated quick buttons -->
+                </div>
+            </div>
+
+            <!-- モーダルフッター -->
+            <div class="flex gap-3 pt-2 border-t">
+                <button onclick="clearCurrentMatchScore()" class="w-1/3 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-sm rounded-xl transition">
+                    スコア消去
+                </button>
+                <button onclick="saveMatchScore()" class="w-2/3 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-sm rounded-xl shadow transition">
+                    確定・保存
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- QRコード共有モーダル -->
+    <div id="qr-modal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden no-print">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center space-y-4">
+            <div class="flex justify-between items-center border-b pb-3">
+                <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                    <i class="fa-solid fa-qrcode text-emerald-600"></i> 参加者共有用QRコード
+                </h3>
+                <button onclick="closeQRModal()" class="text-slate-400 hover:text-slate-600 p-1">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+            
+            <p class="text-xs text-slate-500">スマホのカメラで読み取ると、全員で同じ対戦表の閲覧・結果入力ができます。</p>
+
+            <div class="flex justify-center p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <img id="qr-code-img" src="" alt="QR Code" class="w-48 h-48 rounded">
+            </div>
+
+            <div class="space-y-1">
+                <p class="text-xs font-bold text-slate-600">共有URL</p>
+                <input type="text" id="share-url-input" readonly class="w-full text-xs bg-slate-100 border border-slate-300 rounded px-2 py-1.5 font-mono text-center select-all">
+            </div>
+
+            <button onclick="copyShareUrl()" class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow transition">
+                <i class="fa-solid fa-copy mr-1"></i> URLをコピー
+            </button>
+        </div>
+    </div>
+
+    <!-- トースト通知UI -->
+    <div id="toast-container" class="fixed bottom-5 right-5 z-50 space-y-2 pointer-events-none"></div>
+
+    <script>
+        // --- アプリケーション状態 State ---
+        let state = {
+            title: "卓球部 練習試合 総当たり戦",
+            courtCount: 2,
+            matchFormat: 5,
+            players: [
+                { id: 1, name: "佐藤 健", team: "青空クラブ" },
+                { id: 2, name: "田中 太郎", team: "青空クラブ" },
+                { id: 3, name: "鈴木 花子", team: "南卓球会" },
+                { id: 4, name: "高橋 誠", team: "南卓球会" },
+                { id: 5, name: "渡辺 陸", team: "西卓球部" }
+            ],
+            matches: [],
+            filter: 'all',
+            activeModalMatchId: null,
+            tempScoreA: 0,
+            tempScoreB: 0,
+            roomId: null
+        };
+
+        const STORAGE_KEY = 'table_tennis_tournament_data_v1';
+        let firebaseApp = null;
+        let firebaseDb = null;
+        let roomRef = null;
+        let isSyncingFromRemote = false;
+
+        // 公開テスト用デモFirebase設定（独自のFirebaseプロジェクトを設定することも可能）
+        const firebaseConfig = {
+            databaseURL: "https://tt-manager-default-rtdb.asia-southeast1.firebasedatabase.app"
+        };
+
+        // 初期化 Load
+        window.onload = function() {
+            loadSavedData();
+            renderPlayerList();
+            
+            // URLクエリパラメータからルームIDを取得
+            const urlParams = new URLSearchParams(window.location.search);
+            const queryRoom = urlParams.get('room');
+            if (queryRoom) {
+                document.getElementById('room-id-input').value = queryRoom;
+                connectToRoom(queryRoom);
+            } else if (state.roomId) {
+                document.getElementById('room-id-input').value = state.roomId;
+                connectToRoom(state.roomId);
+            }
+
+            if (state.matches && state.matches.length > 0) {
+                renderMatches();
+                renderStandings();
+            }
+        };
+
+        // リアルタイム通信接続
+        function connectToRoom(roomId) {
+            roomId = roomId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+            if (!roomId) return;
+
+            try {
+                if (!firebaseApp) {
+                    firebaseApp = firebase.initializeApp(firebaseConfig, 'tt-app-' + Math.random());
+                    firebaseDb = firebase.database(firebaseApp);
+                }
+
+                if (roomRef) {
+                    roomRef.off();
+                }
+
+                state.roomId = roomId;
+                roomRef = firebaseDb.ref('rooms/' + roomId);
+
+                // 状態変化リスナー
+                roomRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        isSyncingFromRemote = true;
+                        state.title = data.title || state.title;
+                        state.courtCount = data.courtCount || state.courtCount;
+                        state.matchFormat = data.matchFormat || state.matchFormat;
+                        state.players = data.players || [];
+                        state.matches = data.matches || [];
+                        
+                        document.getElementById('tournament-title').value = state.title;
+                        document.getElementById('court-count').value = state.courtCount;
+                        document.getElementById('match-format').value = state.matchFormat;
+
+                        renderPlayerList();
+                        renderMatches();
+                        renderStandings();
+                        isSyncingFromRemote = false;
+                    } else {
+                        // 初回作成時
+                        saveData();
+                    }
+                });
+
+                // UI更新
+                const statusBadge = document.getElementById('online-status-badge');
+                statusBadge.className = "flex items-center gap-1.5 px-2.5 py-1 rounded-full font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40";
+                statusBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span> オンライン同期中`;
+
+                document.getElementById('current-room-text').textContent = `ルーム: ${roomId} (リアルタイム接続中)`;
+                document.getElementById('btn-show-qr').classList.remove('hidden');
+
+                showToast(`ルーム 「${roomId}」 に接続しました`, 'success');
+                saveLocalOnly();
+            } catch (err) {
+                console.error("Firebase connection error:", err);
+                showToast("オンライン接続に失敗しました。ローカルモードで動作します。", "error");
+            }
+        }
+
+        function joinRoomFromInput() {
+            const input = document.getElementById('room-id-input').value.trim();
+            if (!input) {
+                showToast("ルームIDを入力してください", "warning");
+                return;
+            }
+            connectToRoom(input);
+        }
+
+        // 保存（ローカル ＋ オンライン）
+        function saveData() {
+            saveLocalOnly();
+            if (roomRef && !isSyncingFromRemote) {
+                roomRef.set({
+                    title: state.title,
+                    courtCount: state.courtCount,
+                    matchFormat: state.matchFormat,
+                    players: state.players,
+                    matches: state.matches,
+                    updatedAt: Date.now()
+                }).catch(err => console.error("Firebase set error", err));
+            }
+        }
+
+        function saveLocalOnly() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                    title: state.title,
+                    courtCount: state.courtCount,
+                    matchFormat: state.matchFormat,
+                    players: state.players,
+                    matches: state.matches,
+                    roomId: state.roomId
+                }));
+            } catch (e) {
+                console.error("Failed to save state", e);
+            }
+        }
+
+        // ローカルストレージ読み込み
+        function loadSavedData() {
+            try {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    const parsed = JSON.parse(saved);
+                    state = { ...state, ...parsed };
+                    document.getElementById('tournament-title').value = state.title || "卓球部 練習試合 総当たり戦";
+                    document.getElementById('court-count').value = state.courtCount || 2;
+                    document.getElementById('match-format').value = state.matchFormat || 5;
+                }
+            } catch (e) {
+                console.error("Failed to load state", e);
+            }
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            let bgClass = "bg-slate-800 text-white";
+            if (type === 'success') bgClass = "bg-emerald-600 text-white";
+            if (type === 'warning') bgClass = "bg-amber-500 text-white";
+            if (type === 'error') bgClass = "bg-rose-600 text-white";
+
+            toast.className = `${bgClass} px-4 py-2.5 rounded-xl shadow-xl text-xs font-bold pointer-events-auto flex items-center gap-2 transform transition-all duration-300 translate-y-2 opacity-0`;
+            toast.innerHTML = `<span>${escapeHtml(message)}</span>`;
+
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.classList.remove('translate-y-2', 'opacity-0');
+            }, 10);
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-y-2');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        function showQRModal() {
+            if (!state.roomId) return;
+            const baseUrl = window.location.href.split('?')[0];
+            const shareUrl = `${baseUrl}?room=${encodeURIComponent(state.roomId)}`;
+            
+            document.getElementById('share-url-input').value = shareUrl;
+            document.getElementById('qr-code-img').src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(shareUrl)}`;
+            document.getElementById('qr-modal').classList.remove('hidden');
+        }
+
+        function closeQRModal() {
+            document.getElementById('qr-modal').classList.add('hidden');
+        }
+
+        function copyShareUrl() {
+            const input = document.getElementById('share-url-input');
+            input.select();
+            document.execCommand('copy');
+            showToast("共有用URLをコピーしました！", "success");
+        }
+
+        function addPlayer() {
+            const nameInput = document.getElementById('new-player-name');
+            const teamInput = document.getElementById('new-player-team');
+            const name = nameInput.value.trim();
+            const team = teamInput.value.trim();
+
+            if (!name) return;
+
+            if (state.players.length >= 20) {
+                showToast("参加者は最大20人までです。", "warning");
+                return;
+            }
+
+            const newId = state.players.length > 0 ? Math.max(...state.players.map(p => p.id)) + 1 : 1;
+            state.players.push({ id: newId, name: name, team: team });
+            nameInput.value = '';
+            teamInput.value = '';
+            renderPlayerList();
+            saveData();
+            showToast(`${name} さんを追加しました`, "success");
+        }
+
+        function removePlayer(id) {
+            state.players = state.players.filter(p => p.id !== id);
+            renderPlayerList();
+            saveData();
+        }
+
+        function clearAllPlayers() {
+            state.players = [];
+            renderPlayerList();
+            saveData();
+            showToast("参加者をクリアしました", "info");
+        }
+
+        function generateTournament() {
+            const titleInput = document.getElementById('tournament-title').value.trim();
+            const courtsInput = parseInt(document.getElementById('court-count').value);
+            const formatInput = parseInt(document.getElementById('match-format').value);
+
+            if (state.players.length < 2) {
+                showToast("対戦表を作成するには最低2人の参加者が必要です。", "warning");
+                return;
+            }
+
+            state.title = titleInput || "卓球部 練習試合 総当たり戦";
+            state.courtCount = Math.max(1, Math.min(10, courtsInput || 1));
+            state.matchFormat = formatInput;
+
+            // バーガーシステム（総当たり生成）
+            let playerList = [...state.players];
+            let isOdd = playerList.length % 2 !== 0;
+            if (isOdd) {
+                playerList.push({ id: -1, name: 'BYE (休憩)', team: '' });
+            }
+
+            const n = playerList.length;
+            const roundsCount = n - 1;
+            const matchesPerRoundCount = n / 2;
+
+            let roundGroups = [];
+            let list = [...playerList];
+
+            for (let r = 0; r < roundsCount; r++) {
+                let currentRoundMatches = [];
+                for (let i = 0; i < matchesPerRoundCount; i++) {
+                    let p1 = list[i];
+                    let p2 = list[n - 1 - i];
+
+                    if (p1.id !== -1 && p2.id !== -1) {
+                        const isSameTeam = p1.team && p2.team && p1.team.trim() === p2.team.trim();
+                        currentRoundMatches.push({
+                            round: r + 1,
+                            playerAId: p1.id,
+                            playerBId: p2.id,
+                            isSameTeam: !!isSameTeam
+                        });
+                    }
+                }
+                roundGroups.push(currentRoundMatches);
+                list.splice(1, 0, list.pop());
+            }
+
+            // 同チーム対決が出来るだけ後半に来るようソート
+            roundGroups.sort((rA, rB) => {
+                const sameCountA = rA.filter(m => m.isSameTeam).length;
+                const sameCountB = rB.filter(m => m.isSameTeam).length;
+                return sameCountA - sameCountB;
+            });
+
+            let sortedMatches = [];
+            roundGroups.forEach(rg => {
+                rg.sort((a, b) => (a.isSameTeam ? 1 : 0) - (b.isSameTeam ? 1 : 0));
+                sortedMatches.push(...rg);
+            });
+
+            let matchIdCounter = 1;
+            let finalMatches = [];
+            let currentSlot = 1;
+            let currentCourt = 1;
+
+            sortedMatches.forEach(m => {
+                finalMatches.push({
+                    id: matchIdCounter++,
+                    round: m.round,
+                    slot: currentSlot,
+                    court: currentCourt,
+                    playerAId: m.playerAId,
+                    playerBId: m.playerBId,
+                    scoreA: 0,
+                    scoreB: 0,
+                    completed: false,
+                    isSameTeam: m.isSameTeam
+                });
+
+                currentCourt++;
+                if (currentCourt > state.courtCount) {
+                    currentCourt = 1;
+                    currentSlot++;
+                }
+            });
+
+            state.matches = finalMatches;
+            saveData();
+
+            renderMatches();
+            switchTab('matches');
+            showToast("対戦表を自動生成しました！", "success");
+        }
+
+        function resetScores() {
+            state.matches.forEach(m => {
+                m.scoreA = 0;
+                m.scoreB = 0;
+                m.completed = false;
+            });
+            saveData();
+            renderMatches();
+            showToast("全試合のスコアを初期化しました", "info");
+        }
+
+        function saveData() {
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            } catch (e) {
+                console.error("Failed to save state", e);
+            }
+        }
+
+        function switchTab(tabName) {
+            const tabs = ['setup', 'matches', 'standings'];
+            tabs.forEach(t => {
+                const sec = document.getElementById(`sec-${t}`);
+                const btn = document.getElementById(`tab-btn-${t}`);
+                if (t === tabName) {
+                    sec.classList.remove('hidden');
+                    btn.className = "px-4 py-2 rounded-lg font-bold text-sm transition flex items-center gap-2 bg-white text-emerald-800 shadow";
+                } else {
+                    sec.classList.add('hidden');
+                    btn.className = "px-4 py-2 rounded-lg font-bold text-sm transition flex items-center gap-2 text-emerald-100 hover:text-white";
+                }
+            });
+
+            if (tabName === 'standings') {
+                renderStandings();
+            }
+        }
+
+        function renderPlayerList() {
+            const container = document.getElementById('player-list');
+            const badge = document.getElementById('player-count-badge');
+            container.innerHTML = '';
+
+            badge.textContent = `${state.players.length} / 20人`;
+
+            state.players.forEach((player, idx) => {
+                const chip = document.createElement('div');
+                chip.className = "flex items-center justify-between bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-sm font-medium text-slate-700 group hover:border-emerald-300 transition";
+                const teamBadge = player.team ? `<span class="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-normal ml-1 border border-slate-300/50">${escapeHtml(player.team)}</span>` : '';
+                chip.innerHTML = `
+                    <div class="flex items-center gap-2 truncate">
+                        <span class="w-5 h-5 rounded-full bg-slate-200 text-slate-600 text-xs flex items-center justify-center font-bold flex-shrink-0">${idx + 1}</span>
+                        <span class="truncate font-bold text-slate-800">${escapeHtml(player.name)}</span>
+                        ${teamBadge}
+                    </div>
+                    <button onclick="removePlayer(${player.id})" class="text-slate-400 hover:text-rose-500 p-1 opacity-80 group-hover:opacity-100 transition">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                `;
+                container.appendChild(chip);
+            });
+        }
+
+        function addPlayer() {
+            const nameInput = document.getElementById('new-player-name');
+            const teamInput = document.getElementById('new-player-team');
+            const name = nameInput.value.trim();
+            const team = teamInput.value.trim();
+
+            if (!name) return;
+
+            if (state.players.length >= 20) {
+                alert("参加者は最大20人までです。");
+                return;
+            }
+
+            const newId = state.players.length > 0 ? Math.max(...state.players.map(p => p.id)) + 1 : 1;
+            state.players.push({ id: newId, name: name, team: team });
+            nameInput.value = '';
+            teamInput.value = '';
+            renderPlayerList();
+            saveData();
+        }
+
+        function removePlayer(id) {
+            state.players = state.players.filter(p => p.id !== id);
+            renderPlayerList();
+            saveData();
+        }
+
+        function clearAllPlayers() {
+            if (confirm("登録中の選手をすべて削除しますか？")) {
+                state.players = [];
+                renderPlayerList();
+                saveData();
+            }
+        }
+
+        function addSamplePlayers() {
+            const samples = [
+                { name: "佐藤 健", team: "青空クラブ" },
+                { name: "田中 太郎", team: "青空クラブ" },
+                { name: "鈴木 花子", team: "南卓球会" },
+                { name: "高橋 誠", team: "南卓球会" },
+                { name: "渡辺 陸", team: "西卓球部" },
+                { name: "伊藤 葵", team: "西卓球部" }
+            ];
+            state.players = samples.map((item, i) => ({ id: i + 1, name: item.name, team: item.team }));
+            renderPlayerList();
+            saveData();
+        }
+
+        function importBulkPlayers() {
+            const textarea = document.getElementById('bulk-player-input');
+            const lines = textarea.value.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+            
+            if (lines.length === 0) return;
+
+            let currentPlayers = [...state.players];
+            let nextId = currentPlayers.length > 0 ? Math.max(...currentPlayers.map(p => p.id)) + 1 : 1;
+
+            for (let line of lines) {
+                if (currentPlayers.length >= 20) break;
+                
+                let parts = line.split(/[,，\t]/);
+                let name = parts[0] ? parts[0].trim() : '';
+                let team = parts[1] ? parts[1].trim() : '';
+
+                if (name) {
+                    currentPlayers.push({ id: nextId++, name: name, team: team });
+                }
+            }
+
+            state.players = currentPlayers;
+            textarea.value = '';
+            renderPlayerList();
+            saveData();
+        }
+
+        function generateTournament() {
+            const titleInput = document.getElementById('tournament-title').value.trim();
+            const courtsInput = parseInt(document.getElementById('court-count').value);
+            const formatInput = parseInt(document.getElementById('match-format').value);
+
+            if (state.players.length < 2) {
+                alert("対戦表を作成するには最低2人の参加者が必要です。");
+                return;
+            }
+
+            state.title = titleInput || "卓球部 練習試合 総当たり戦";
+            state.courtCount = Math.max(1, Math.min(10, courtsInput || 1));
+            state.matchFormat = formatInput;
+
+            const playerMap = new Map(state.players.map(p => [p.id, p]));
+
+            // 1. ラウンドロビン（バーガーシステム）で組合せ・ラウンド分け生成
+            let playerList = [...state.players];
+            let isOdd = playerList.length % 2 !== 0;
+            if (isOdd) {
+                playerList.push({ id: -1, name: 'BYE (休憩)', team: '' }); // ダミー選手
+            }
+
+            const n = playerList.length;
+            const roundsCount = n - 1;
+            const matchesPerRoundCount = n / 2;
+
+            let roundGroups = []; // 各ラウンドごとの対戦配列 [[match1, match2...], ...]
+
+            let list = [...playerList];
+
+            for (let r = 0; r < roundsCount; r++) {
+                let currentRoundMatches = [];
+                for (let i = 0; i < matchesPerRoundCount; i++) {
+                    let p1 = list[i];
+                    let p2 = list[n - 1 - i];
+
+                    if (p1.id !== -1 && p2.id !== -1) {
+                        const isSameTeam = p1.team && p2.team && p1.team.trim() === p2.team.trim();
+                        currentRoundMatches.push({
+                            round: r + 1,
+                            playerAId: p1.id,
+                            playerBId: p2.id,
+                            isSameTeam: !!isSameTeam
+                        });
+                    }
+                }
+                roundGroups.push(currentRoundMatches);
+
+                // 輪転 (最初の要素固定、残りを回転)
+                list.splice(1, 0, list.pop());
+            }
+
+            // 2. 「同チーム同士の対戦（isSameTeam）」が出来るだけ後半に来るよう、ラウンド順を自動並び替え
+            // 各ラウンド内の「同チーム同士対戦の割合」を計算し、同チーム対戦の数が少ない（または0）ラウンドを前半、多いラウンドを後半へ配置
+            roundGroups.sort((rA, rB) => {
+                const sameCountA = rA.filter(m => m.isSameTeam).length;
+                const sameCountB = rB.filter(m => m.isSameTeam).length;
+                return sameCountA - sameCountB;
+            });
+
+            // 3. 並び替えられたラウンドから平坦な対戦リストへ展開し、同チーム対戦をさらに個別に後ろへ微調整
+            let sortedMatches = [];
+            roundGroups.forEach(rg => {
+                // ラウンド内でも同チーム対戦カードを後方に並べ替え
+                rg.sort((a, b) => (a.isSameTeam ? 1 : 0) - (b.isSameTeam ? 1 : 0));
+                sortedMatches.push(...rg);
+            });
+
+            // 4. 卓球台数（courtCount）に合わせてタイムスロット・コートに割り当て
+            let matchIdCounter = 1;
+            let finalMatches = [];
+            let currentSlot = 1;
+            let currentCourt = 1;
+
+            sortedMatches.forEach(m => {
+                finalMatches.push({
+                    id: matchIdCounter++,
+                    round: m.round,
+                    slot: currentSlot,
+                    court: currentCourt,
+                    playerAId: m.playerAId,
+                    playerBId: m.playerBId,
+                    scoreA: 0,
+                    scoreB: 0,
+                    completed: false,
+                    isSameTeam: m.isSameTeam
+                });
+
+                currentCourt++;
+                if (currentCourt > state.courtCount) {
+                    currentCourt = 1;
+                    currentSlot++;
+                }
+            });
+
+            state.matches = finalMatches;
+            saveData();
+
+            // 画面反映
+            renderMatches();
+            switchTab('matches');
+        }
+
+        function renderMatches() {
+            document.getElementById('display-tournament-title').textContent = state.title;
+            document.getElementById('print-tournament-title').textContent = state.title;
+            document.getElementById('tournament-info-badge').textContent = 
+                `参加者 ${state.players.length}名 | 全 ${state.matches.length}試合 | 使用卓球台 ${state.courtCount}台`;
+
+            // 進捗計算
+            const completedCount = state.matches.filter(m => m.completed).length;
+            const totalCount = state.matches.length;
+            const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
+
+            document.getElementById('progress-text').textContent = `${completedCount} / ${totalCount} 完了 (${pct}%)`;
+            document.getElementById('progress-bar').style.width = `${pct}%`;
+
+            const container = document.getElementById('matches-container');
+            container.innerHTML = '';
+
+            if (state.matches.length === 0) {
+                container.innerHTML = `
+                    <div class="bg-white p-12 rounded-2xl text-center border border-slate-200">
+                        <i class="fa-solid fa-table-tennis-paddle-ball text-4xl text-slate-300 mb-3"></i>
+                        <p class="font-bold text-slate-600">まだ対戦表が作成されていません。</p>
+                        <p class="text-xs text-slate-400 mt-1">「設定・参加者」タブで選手を登録し、対戦表を作成してください。</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // スロット（時間枠）ごとにグループ化
+            const slotsMap = {};
+            state.matches.forEach(m => {
+                if (!slotsMap[m.slot]) slotsMap[m.slot] = [];
+                slotsMap[m.slot].push(m);
+            });
+
+            const playerMap = new Map(state.players.map(p => [p.id, p]));
+
+            Object.keys(slotsMap).sort((a, b) => Number(a) - Number(b)).forEach(slotNum => {
+                let slotMatches = slotsMap[slotNum];
+
+                // フィルタリング
+                if (state.filter === 'pending') {
+                    slotMatches = slotMatches.filter(m => !m.completed);
+                } else if (state.filter === 'completed') {
+                    slotMatches = slotMatches.filter(m => m.completed);
+                }
+
+                if (slotMatches.length === 0) return;
+
+                const slotEl = document.createElement('div');
+                slotEl.className = "bg-white p-5 rounded-2xl shadow-sm border border-slate-200/80 space-y-4";
+
+                const slotHeader = document.createElement('div');
+                slotHeader.className = "flex items-center justify-between border-b border-slate-100 pb-2.5";
+                slotHeader.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <span class="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 text-xs font-black flex items-center justify-center">第${slotNum}枠</span>
+                        <span class="text-sm font-bold text-slate-700">時間枠（第${slotNum}スロット）</span>
+                    </div>
+                `;
+                slotEl.appendChild(slotHeader);
+
+                const cardsGrid = document.createElement('div');
+                cardsGrid.className = "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3";
+
+                slotMatches.forEach(m => {
+                    const pA = playerMap.get(m.playerAId) || { name: '不明', team: '' };
+                    const pB = playerMap.get(m.playerBId) || { name: '不明', team: '' };
+
+                    const isWinA = m.completed && m.scoreA > m.scoreB;
+                    const isWinB = m.completed && m.scoreB > m.scoreA;
+
+                    const sameTeamBadge = m.isSameTeam ? `<span class="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.5 rounded"><i class="fa-solid fa-people-group mr-1"></i>同チーム対決</span>` : '';
+
+                    const card = document.createElement('div');
+                    card.onclick = () => openScoreModal(m.id);
+                    card.className = `p-4 rounded-xl border transition cursor-pointer flex flex-col justify-between relative overflow-hidden ${
+                        m.completed 
+                            ? 'bg-slate-50 border-slate-200 hover:border-slate-300' 
+                            : 'bg-white border-emerald-200 hover:border-emerald-400 hover:shadow-md'
+                    }`;
+
+                    card.innerHTML = `
+                        <div class="flex justify-between items-center text-xs font-bold text-slate-400 mb-2">
+                            <div class="flex items-center gap-1.5">
+                                <span class="text-emerald-700 font-extrabold bg-emerald-50 px-2 py-0.5 rounded">台 ${m.court}</span>
+                                ${sameTeamBadge}
+                            </div>
+                            <span>${m.completed ? '<span class="text-emerald-600"><i class="fa-solid fa-circle-check"></i> 終了</span>' : '<span class="text-amber-600"><i class="fa-regular fa-clock"></i> 未実施</span>'}</span>
+                        </div>
+
+                        <div class="space-y-2 my-1">
+                            <!-- 選手A -->
+                            <div class="flex justify-between items-center">
+                                <div class="truncate mr-2">
+                                    <span class="font-bold text-sm ${isWinA ? 'text-emerald-700 font-extrabold' : 'text-slate-800'}">
+                                        ${isWinA ? '👑 ' : ''}${escapeHtml(pA.name)}
+                                    </span>
+                                    ${pA.team ? `<span class="text-[10px] text-slate-400 ml-1">(${escapeHtml(pA.team)})</span>` : ''}
+                                </div>
+                                <span class="text-xl font-black ${m.completed ? (isWinA ? 'text-emerald-600' : 'text-slate-400') : 'text-slate-300'}">
+                                    ${m.scoreA}
+                                </span>
+                            </div>
+                            
+                            <!-- 選手B -->
+                            <div class="flex justify-between items-center">
+                                <div class="truncate mr-2">
+                                    <span class="font-bold text-sm ${isWinB ? 'text-emerald-700 font-extrabold' : 'text-slate-800'}">
+                                        ${isWinB ? '👑 ' : ''}${escapeHtml(pB.name)}
+                                    </span>
+                                    ${pB.team ? `<span class="text-[10px] text-slate-400 ml-1">(${escapeHtml(pB.team)})</span>` : ''}
+                                </div>
+                                <span class="text-xl font-black ${m.completed ? (isWinB ? 'text-emerald-600' : 'text-slate-400') : 'text-slate-300'}">
+                                    ${m.scoreB}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="mt-2 text-center text-xs font-bold text-slate-400 border-t border-slate-100 pt-2 flex items-center justify-center gap-1">
+                            <i class="fa-solid fa-pen-to-square"></i> スコアを入力
+                        </div>
+                    `;
+
+                    cardsGrid.appendChild(card);
+                });
+
+                slotEl.appendChild(cardsGrid);
+                container.appendChild(slotEl);
+            });
+        }
+
+        function openScoreModal(matchId) {
+            const match = state.matches.find(m => m.id === matchId);
+            if (!match) return;
+
+            state.activeModalMatchId = matchId;
+            state.tempScoreA = match.scoreA;
+            state.tempScoreB = match.scoreB;
+
+            const playerMap = new Map(state.players.map(p => [p.id, p]));
+            const pA = playerMap.get(match.playerAId) || { name: '選手A', team: '' };
+            const pB = playerMap.get(match.playerBId) || { name: '選手B', team: '' };
+
+            document.getElementById('modal-match-badge').textContent = `第${match.slot}枠 - 卓球台 ${match.court}`;
+            document.getElementById('modal-player-a').innerHTML = `${escapeHtml(pA.name)} ${pA.team ? `<span class="text-xs font-normal text-slate-400 block">(${escapeHtml(pA.team)})</span>` : ''}`;
+            document.getElementById('modal-player-b').innerHTML = `${escapeHtml(pB.name)} ${pB.team ? `<span class="text-xs font-normal text-slate-400 block">(${escapeHtml(pB.team)})</span>` : ''}`;
+
+            // クイックボタン生成
+            const quickBtnContainer = document.getElementById('quick-score-buttons');
+            quickBtnContainer.innerHTML = '';
+
+            let quickScores = [];
+            if (state.matchFormat === 5) {
+                quickScores = [[3,0], [3,1], [3,2], [0,3], [1,3], [2,3]];
+            } else if (state.matchFormat === 3) {
+                quickScores = [[2,0], [2,1], [0,2], [1,2]];
+            } else {
+                quickScores = [[1,0], [0,1]];
+            }
+
+            quickScores.forEach(([sA, sB]) => {
+                const btn = document.createElement('button');
+                btn.className = "px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-700 hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 transition";
+                btn.textContent = `${sA} - ${sB}`;
+                btn.onclick = () => {
+                    state.tempScoreA = sA;
+                    state.tempScoreB = sB;
+                    updateModalDisplay();
+                };
+                quickBtnContainer.appendChild(btn);
+            });
+
+            updateModalDisplay();
+            document.getElementById('score-modal').classList.remove('hidden');
+        }
+
+        function updateModalDisplay() {
+            document.getElementById('modal-score-a').textContent = state.tempScoreA;
+            document.getElementById('modal-score-b').textContent = state.tempScoreB;
+        }
+
+        function adjustScore(player, delta) {
+            if (player === 'a') {
+                state.tempScoreA = Math.max(0, Math.min(99, state.tempScoreA + delta));
+            } else {
+                state.tempScoreB = Math.max(0, Math.min(99, state.tempScoreB + delta));
+            }
+            updateModalDisplay();
+        }
+
+        function saveMatchScore() {
+            const match = state.matches.find(m => m.id === state.activeModalMatchId);
+            if (match) {
+                match.scoreA = state.tempScoreA;
+                match.scoreB = state.tempScoreB;
+                match.completed = true;
+                saveData();
+                renderMatches();
+            }
+            closeScoreModal();
+        }
+
+        function clearCurrentMatchScore() {
+            const match = state.matches.find(m => m.id === state.activeModalMatchId);
+            if (match) {
+                match.scoreA = 0;
+                match.scoreB = 0;
+                match.completed = false;
+                saveData();
+                renderMatches();
+            }
+            closeScoreModal();
+        }
+
+        function closeScoreModal() {
+            document.getElementById('score-modal').classList.add('hidden');
+            state.activeModalMatchId = null;
+        }
+
+        function resetScores() {
+            if (confirm("全試合の入力済みスコアをリセットしますか？")) {
+                state.matches.forEach(m => {
+                    m.scoreA = 0;
+                    m.scoreB = 0;
+                    m.completed = false;
+                });
+                saveData();
+                renderMatches();
+            }
+        }
+
+        function renderStandings() {
+            if (!state.players || state.players.length === 0) return;
+
+            // 各選手のスタッツ初期化
+            const statsMap = new Map();
+            state.players.forEach(p => {
+                statsMap.set(p.id, {
+                    id: p.id,
+                    name: p.name,
+                    team: p.team || '',
+                    played: 0,
+                    won: 0,
+                    lost: 0,
+                    setsWon: 0,
+                    setsLost: 0
+                });
+            });
+
+            // マトリクス対戦結果マップ [aId][bId] => { scoreA, scoreB, completed, isWinnerA }
+            const matrixResult = {};
+            state.players.forEach(p1 => {
+                matrixResult[p1.id] = {};
+            });
+
+            state.matches.forEach(m => {
+                if (m.completed) {
+                    const statsA = statsMap.get(m.playerAId);
+                    const statsB = statsMap.get(m.playerBId);
+
+                    if (statsA && statsB) {
+                        statsA.played++;
+                        statsB.played++;
+
+                        statsA.setsWon += m.scoreA;
+                        statsA.setsLost += m.scoreB;
+                        statsB.setsWon += m.scoreB;
+                        statsB.setsLost += m.scoreA;
+
+                        if (m.scoreA > m.scoreB) {
+                            statsA.won++;
+                            statsB.lost++;
+                        } else if (m.scoreB > m.scoreA) {
+                            statsB.won++;
+                            statsA.lost++;
+                        }
+                    }
+                }
+
+                // マトリクス用データ保存
+                if (matrixResult[m.playerAId]) {
+                    matrixResult[m.playerAId][m.playerBId] = {
+                        scoreSelf: m.scoreA,
+                        scoreOpponent: m.scoreB,
+                        completed: m.completed
+                    };
+                }
+                if (matrixResult[m.playerBId]) {
+                    matrixResult[m.playerBId][m.playerAId] = {
+                        scoreSelf: m.scoreB,
+                        scoreOpponent: m.scoreA,
+                        completed: m.completed
+                    };
+                }
+            });
+
+            // ソートアルゴリズム：1. 勝利数 desc, 2. セット率 (setsWon / (setsWon+setsLost)) desc, 3. 総得セット数 desc
+            const standings = Array.from(statsMap.values()).sort((a, b) => {
+                if (b.won !== a.won) return b.won - a.won;
+
+                const setRatioA = (a.setsWon + a.setsLost) > 0 ? a.setsWon / (a.setsWon + a.setsLost) : 0;
+                const setRatioB = (b.setsWon + b.setsLost) > 0 ? b.setsWon / (b.setsWon + b.setsLost) : 0;
+
+                if (setRatioB !== setRatioA) return setRatioB - setRatioA;
+                return b.setsWon - a.setsWon;
+            });
+
+            // 1. 順位表テーブルの作成
+            const rankingBody = document.getElementById('ranking-table-body');
+            rankingBody.innerHTML = '';
+
+            standings.forEach((st, idx) => {
+                const winRate = st.played > 0 ? Math.round((st.won / st.played) * 100) : 0;
+                const setRatio = (st.setsWon + st.setsLost) > 0 ? (st.setsWon / (st.setsWon + st.setsLost)).toFixed(2) : '-';
+
+                let rankBadgeClass = 'bg-slate-100 text-slate-600';
+                if (idx === 0) rankBadgeClass = 'bg-amber-100 text-amber-800 font-black';
+                if (idx === 1) rankBadgeClass = 'bg-slate-200 text-slate-700 font-black';
+                if (idx === 2) rankBadgeClass = 'bg-amber-800/10 text-amber-900 font-black';
+
+                const teamText = st.team ? `<span class="text-xs text-slate-400 font-normal ml-1">(${escapeHtml(st.team)})</span>` : '';
+
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-50 transition";
+                tr.innerHTML = `
+                    <td class="p-3 text-center">
+                        <span class="inline-block w-6 h-6 rounded-full text-xs leading-6 ${rankBadgeClass}">${idx + 1}</span>
+                    </td>
+                    <td class="p-3 font-bold text-slate-800">${escapeHtml(st.name)}${teamText}</td>
+                    <td class="p-3 text-center text-slate-600">${st.played}</td>
+                    <td class="p-3 text-center font-bold text-emerald-600">${st.won}</td>
+                    <td class="p-3 text-center font-bold text-rose-500">${st.lost}</td>
+                    <td class="p-3 text-center font-medium">${winRate}%</td>
+                    <td class="p-3 text-center text-slate-700">${st.setsWon}</td>
+                    <td class="p-3 text-center text-slate-700">${st.setsLost}</td>
+                    <td class="p-3 text-center text-slate-600 font-medium">${setRatio}</td>
+                `;
+                rankingBody.appendChild(tr);
+            });
+
+            // 2. 勝敗表（星取表 / クロステーブル）の作成
+            const matrixTable = document.getElementById('matrix-table');
+            matrixTable.innerHTML = '';
+
+            // ヘッダー行
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            headerRow.className = "bg-slate-100 text-slate-700 border-b border-slate-200";
+
+            let headerHTML = `<th class="p-2.5 border border-slate-200 font-bold bg-slate-200/60 min-w-[100px]">選手名</th>`;
+            state.players.forEach(p => {
+                headerHTML += `<th class="p-2 border border-slate-200 font-bold max-w-[80px] truncate">${escapeHtml(p.name)}</th>`;
+            });
+            headerHTML += `<th class="p-2 border border-slate-200 font-bold bg-emerald-50 text-emerald-800 w-16">勝-負</th>`;
+            headerRow.innerHTML = headerHTML;
+            thead.appendChild(headerRow);
+            matrixTable.appendChild(thead);
+
+            // ボディ行
+            const tbody = document.createElement('tbody');
+            state.players.forEach(rowPlayer => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-50";
+
+                let rowHTML = `<td class="p-2 border border-slate-200 font-bold text-slate-800 bg-slate-50/80 text-left truncate">${escapeHtml(rowPlayer.name)}</td>`;
+
+                state.players.forEach(colPlayer => {
+                    if (rowPlayer.id === colPlayer.id) {
+                        // 自分同士のセル
+                        rowHTML += `<td class="p-2 border border-slate-200 bg-slate-200/50 text-slate-400">╲</td>`;
+                    } else {
+                        const res = matrixResult[rowPlayer.id] ? matrixResult[rowPlayer.id][colPlayer.id] : null;
+                        if (res && res.completed) {
+                            const isWin = res.scoreSelf > res.scoreOpponent;
+                            const symbol = isWin ? '〇' : '✕';
+                            const badgeColor = isWin ? 'text-emerald-600 font-extrabold' : 'text-rose-500 font-bold';
+                            rowHTML += `
+                                <td class="p-2 border border-slate-200 ${isWin ? 'bg-emerald-50/40' : 'bg-rose-50/20'}">
+                                    <div class="${badgeColor} text-sm">${symbol}</div>
+                                    <div class="text-[10px] text-slate-500">${res.scoreSelf}-${res.scoreOpponent}</div>
+                                </td>
+                            `;
+                        } else {
+                            // 未終了
+                            rowHTML += `<td class="p-2 border border-slate-200 text-slate-300 font-light">-</td>`;
+                        }
+                    }
+                });
+
+                const st = statsMap.get(rowPlayer.id);
+                rowHTML += `<td class="p-2 border border-slate-200 font-bold text-slate-800 bg-emerald-50/50">${st ? st.won : 0}-${st ? st.lost : 0}</td>`;
+
+                tr.innerHTML = rowHTML;
+                tbody.appendChild(tr);
+            });
+
+            matrixTable.appendChild(tbody);
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+    </script>
+</body>
+</html>
